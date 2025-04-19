@@ -1,0 +1,114 @@
+---
+- name: Collect server load metrics
+  hosts: all
+  gather_facts: yes
+  tasks:
+
+    - name: Calculate CPU load percentage
+      set_fact:
+        load_percentage: "{{ (ansible_facts['loadavg']['5m'] | float) }}"
+
+    - name: Create dictionary from variable
+      set_fact:
+        server_config: "{{ { inventory_hostname: load_percentage } }}"
+
+    - name: Checking dict
+      debug:
+        msg: "{{ server_config }}"  
+
+- name: Determine least loaded server
+  hosts: localhost
+  gather_facts: no
+  tasks:
+
+    - name: Build server loads dictionary from hostvars
+      set_fact:
+        all_loads: >-
+          {{
+            dict(
+              groups['all'] |
+              zip(
+                groups['all'] | map('extract', hostvars) | map(attribute='load_percentage', default=0)
+              )
+            )
+          }}
+
+    - name: Find least loaded server
+      set_fact:
+        least_loaded: "{{ all_loads | dict2items | sort(attribute='value') | first }}"
+        most_loaded: "{{ all_loads | dict2items | sort(attribute='value') | last }}"
+
+    - name: Show the least loaded server
+      debug:
+        msg: "Least loaded server is {{ least_loaded.key }} with load {{ least_loaded.value }}"
+
+    - name: Register least loaded host in temporary group
+      add_host:
+        name: "{{ least_loaded.key }}"
+        groups: evaluated_server
+    
+    - name: Show the least loaded group
+      debug:
+        msg: "{{ groups['evaluated_server'] }}"
+
+    - name: Find IP of most loaded server
+      set_fact:
+        second_server_ip: "{{ hostvars[most_loaded.key]['ansible_host'] }}"
+    - name: Debug second server IP  
+      debug:
+        msg: "{{ most_loaded.key }} server IP is {{ second_server_ip }}"
+    
+    - name: Inject second_server_ip into evaluated server hostvars
+      set_fact:
+        second_server_ip: "{{ second_server_ip }}"
+      delegate_to: "{{ least_loaded.key }}"
+      delegate_facts: true
+        
+
+- name: Configure PostgreSQL on least loaded server
+  hosts: evaluated_server
+  gather_facts: no
+  tasks:
+    - name: Install and configure PostgreSQL
+      become: yes 
+      block:
+        - name: Include PostgreSQL role
+          include_role:
+            name: geerlingguy.postgresql
+          vars:
+            postgres_users_no_log: false
+            postgresql_version: "13"
+            postgresql_superuser_password: "12345"
+            postgresql_create_db: true
+            postgresql_databases:
+              - name: my_database
+                lc_collate: en_US.UTF-8
+                lc_ctype: en_US.UTF-8
+                encoding: UTF-8
+                template: template0
+            postgresql_users:
+              - name: timur
+                password: "12345"
+                db: my_database
+                role_attr_flags: "LOGIN" 
+              - name: student
+                password: "54321"
+                db: my_database
+                role_attr_flags: "LOGIN"
+            postgresql_privs:
+              - db: my_database
+                roles: timur
+                privs: ALL
+                type: database
+                grant_option: yes
+              - db: my_database
+                roles: student
+                privs: ALL
+                type: database
+                grant_option: yes               
+            postgresql_hba_entries:
+              - {type: local, database: postgres, user: postgres, auth_method: trust}
+              - {type: local, database: all, user: postgres, auth_method: trust}
+              - {type: local, database: all, user: all, auth_method: peer}
+              - {type: host, database: my_database, user: student, address: '{{ hostvars[inventory_hostname].second_server_ip }}/32', auth_method: 'password'}
+              - {type: host, database: my_database, user: timur, address: '0.0.0.0/0', auth_method: 'password'}
