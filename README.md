@@ -35,7 +35,7 @@ https://hashicorp-releases.yandexcloud.net/terraform/1.11.4/terraform_1.11.4_dar
 
 1. Клонировать репозиторий: Скопируйте проект с GitHub.
 
-    git clone https://github.com/Starboardmist/pgstart.git
+    git clone https://github.com/Starboardmist/pg-start.git
 
 2*. НЕ ОБЯЗАТЕЛЬНО. Также возможно создание двух виртуальных мамшин через Terraform, настроенный под Yandex-Cloud. Соответственно установить переменные для окружения Yandex-Cloud.
     
